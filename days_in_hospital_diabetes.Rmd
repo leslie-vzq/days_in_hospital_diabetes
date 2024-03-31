@@ -1,0 +1,360 @@
+---
+title: "Time in Hospital for Diabetes Patients"
+author: "Leslie Vazquez Moreno"
+date: "2024-03-31"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+library(dplyr)
+library(caret)
+```
+
+```{r}
+# diabetes data
+diabetes = read.csv("~/Desktop/UCR Winter 2024/STAT208/project/data/diabetes.csv")
+
+diabetes[diabetes == "?"] <- NA
+diabetes[diabetes == "Unknown/Invalid"] <- NA
+```
+
+# Question/Problem
+
+Which variables are important in predicting the length of stay at a hospital for a diabetic patient? 
+
+How well does the prediction classifier model perform?
+
+# EDA
+
+```{r}
+diabetes = diabetes[4:ncol(diabetes)]
+
+par(mfrow = c(1,2))
+
+# time_in_hospital
+barplot(table(diabetes[,"time_in_hospital"], useNA = "ifany"), 
+        main = "Barplot Time in the Hospital",
+        xlab = "Days in the Hospital",
+        ylab = "Frequency",
+        cex.names = 0.4)
+# insulin
+barplot(table(diabetes[,"insulin"], useNA = "ifany"), 
+        main = "Barplot Insulin",
+        xlab = "Insulin Given/Dosage Change",
+        ylab = "Frequency")
+par(mfrow = c(1,1))
+
+# dev.print(pdf, 'common_var.pdf')
+```
+
+```{r}
+par(mfrow = c(2,2))
+# weight
+na_count = sum(is.na(diabetes[,"weight"]))
+non_na = length(diabetes[,"weight"]) - na_count
+barplot(c(non_na, na_count), main = "Barplot NA in Weight",
+        names.arg = c("non-NA", "NA"),
+        xlab = "Weight", ylab = "Frequency")
+# payer_code
+na_count = sum(is.na(diabetes[,"payer_code"]))
+non_na = length(diabetes[,"payer_code"]) - na_count
+barplot(c(non_na, na_count), main = "Barplot NA in Payer Code",
+        names.arg = c("non-NA", "NA"),
+        xlab = "Payer Code", ylab = "Frequency")
+# medical_specialty
+na_count = sum(is.na(diabetes[,"medical_specialty"]))
+non_na = length(diabetes[,"medical_specialty"]) - na_count
+barplot(c(non_na, na_count), main = "Barplot NA in Medical Specialty",
+        names.arg = c("non-NA", "NA"),
+        xlab = "Medical Specialty", ylab = "Frequency")
+par(mfrow = c(1,1))
+
+# dev.print(pdf, 'na_var.pdf')
+```
+
+```{r}
+par(mfrow = c(1,2))
+# examide
+barplot(table(diabetes[,"examide"], useNA = "ifany"), 
+        main = "Barplot Examide",
+        ylab = "Frequency",
+        xlab = "Examide Given/Dosage Change")
+# citoglipton
+barplot(table(diabetes[,"citoglipton"], useNA = "ifany"), 
+        main = "Barplot Citoglipton",
+        ylab = "Frequency",
+        xlab = "Citoglipton Given/Dosage Change")
+par(mfrow = c(1,1))
+
+# dev.print(pdf, 'same_var.pdf')
+```
+
+```{r}
+diabetes2 = diabetes[, -c(4, 5, 6, 7, 38, 39)]
+diabetes2 = na.omit(diabetes2)
+# apply(diabetes2, 2, unique)
+diabetes2 = diabetes2[,-c(38, 27, 32, 37, 24)]
+# apply(diabetes2, 2, unique)
+
+for(i in c(13:15)){
+  diabetes2[,i] = chartr("V", "1", diabetes2[,i])
+  diabetes2[,i] = chartr("E", "1", diabetes2[,i])
+}
+diabetes2[,19:34] <- ifelse(diabetes2[,19:34] == "No", 0, 1)
+
+diabetes3 = diabetes2 %>%
+  mutate(race = ifelse(race == "Caucasian", 1, 0),
+         gender = ifelse(gender == "Male", 1, 0),
+         age = as.factor(age), # as.numeric? binary 60 year threshold?
+         time_in_hospital = ifelse(time_in_hospital <= 3, 1, 0),
+         payer_code = ifelse(payer_code == "SP", 1, 0),
+         medical_specialty = ifelse(medical_specialty == "Pediatrics-Endocrinology" | medical_specialty == "InternalMedicine" | medical_specialty == "Endocrinology" | medical_specialty == "Endocrinology-Metabolism", 1, 0),
+         diag_1 = ifelse(floor(as.numeric(diag_1)) == 250, 1,0),
+         diag_2 = ifelse(floor(as.numeric(diag_2)) == 250, 1,0),
+         diag_3 = ifelse(floor(as.numeric(diag_3)) == 250, 1,0),
+         max_glu_serum = ifelse(max_glu_serum == "None", 0,
+                                ifelse(max_glu_serum == "Norm", 1, 2)),
+         A1Cresult = ifelse(A1Cresult == "None", 0,
+                                ifelse(A1Cresult == "Norm", 1, 2)),
+         change = ifelse(change == "Ch", 1, 0),
+         diabetesMed = ifelse(diabetesMed == "Yes", 1, 0),
+         readmitted = ifelse(readmitted == "NO", 0,
+                             ifelse(readmitted == "<30", 1, 2)))
+```
+
+```{r}
+# time_in_hospital, drug variables
+par(mfrow = c(1,2))
+barplot(table(diabetes3[,"time_in_hospital"], useNA = "ifany"), 
+        main = "Barplot Time in the Hospital",
+        ylab = "Frequency",
+        xlab = "Less Than 4 Days in Hospital")
+barplot(table(diabetes3[,"insulin"], useNA = "ifany"), 
+        main = "Barplot Insulin",
+        xlab = "Insulin Given",
+        ylab = "Frequency")
+par(mfrow = c(1,1))
+
+# dev.print(pdf, 'new_var.pdf')
+```
+
+Chi-Square Independence Test with time_in_hospital
+```{r}
+# independence test
+p_value = c()
+cat_var = c(1:3, 5:ncol(diabetes3))
+for(i in cat_var){
+  p_value[which(cat_var == i)] = as.numeric(chisq.test(diabetes3[, i], diabetes3[,"time_in_hospital"])[3])
+}
+chi_y = data.frame(variable = colnames(diabetes3[, c(1:3, 5:ncol(diabetes3))]), 
+                   p_value,
+                   independence = ifelse(p_value < 0.05, "No", "Yes"))
+knitr::kable(chi_y[chi_y$independence == "Yes",])
+# outputs only variables with an independent interpretation
+```
+
+Correlation Heat Map
+```{r, fig.width = 5, fig.height = 5}
+library(ggcorrplot)
+model.matrix(time_in_hospital~., data=diabetes3) %>% 
+  cor(use="pairwise.complete.obs") %>% 
+  ggcorrplot(show.diag=FALSE, type="lower", lab=TRUE, lab_size=0.8) + 
+  theme(axis.text.x=element_text(size=4),
+        axis.text.y=element_text(size=4)) +
+  ggtitle("Correlation Matrix Between Variables")
+
+# dev.print(pdf, 'corr.pdf')
+```
+
+# Model
+
+Logistic Regression: Significant Coefficients
+```{r}
+# Logistic regression
+library(glmnet)
+library(boot)
+log_reg = glm(time_in_hospital ~ ., data = diabetes3, family = "binomial")
+summary(log_reg)[5] # aic
+# summary(log_reg)$coefficients[,1]
+sig_index = as.numeric(which(summary(log_reg)$coefficients[,4] < 0.05))
+knitr::kable(data.frame(coefficients = summary(log_reg)$coefficients[sig_index[1:11],1], p_value = summary(log_reg)$coefficients[sig_index[1:11],4]))
+```
+
+```{r}
+knitr::kable(data.frame(coefficients = summary(log_reg)$coefficients[sig_index[12:21],1], p_value = summary(log_reg)$coefficients[sig_index[12:21],4]))
+```
+
+CV estimate of prediction error
+```{r}
+cv.glm(diabetes3, log_reg, K = 10)$delta[1]
+```
+
+Splitting into Train and Test
+
+Logistic Regression
+```{r}
+# Logistic regression
+# splitting data 20% test, 80% train
+set.seed(1)
+test_index = sample(1:nrow(diabetes3), nrow(diabetes3)/5)
+test = diabetes3[test_index, ]
+train = diabetes3[-test_index, ]
+
+library(glmnet)
+library(boot)
+log_reg = glm(time_in_hospital ~ ., data = train, family = "binomial")
+summary(log_reg)[5] # aic
+# summary(log_reg)$coefficients[,1]
+# sig_index = as.numeric(which(summary(log_reg)$coefficients[,4] < 0.05))
+# knitr::kable(data.frame(coefficients = summary(log_reg)$coefficients[sig_index[1:11],1], p_value = summary(log_reg)$coefficients[sig_index[1:11],4]))
+test_resp = predict(log_reg, newdata = test, type = "response")
+test_pred <- ifelse(test_resp > 0.5, 1, 0)
+mean(test_pred != test$time_in_hospital)
+```
+
+Logistic Regression subset (using AIC)
+```{r}
+# # backwards
+log_reg_aic = step(log_reg)
+# summary(log_reg_aic)$call
+# summary(log_reg_aic)$coefficients
+```
+
+```{r}
+log_reg_aic = glm(time_in_hospital ~ race + gender + age + payer_code + medical_specialty + num_lab_procedures + num_procedures + num_medications + number_outpatient + number_emergency + number_inpatient + diag_1 + diag_2 + diag_3 + number_diagnoses + max_glu_serum + A1Cresult + metformin + repaglinide + glimepiride + glyburide + pioglitazone + insulin + diabetesMed + readmitted, data = train, family = "binomial")
+summary(log_reg_aic)[5] 
+summary(log_reg_aic)$coefficients
+
+test_resp = predict(log_reg_aic, newdata = test, type = "response")
+test_pred <- ifelse(test_resp > 0.5, 1, 0)
+mean(test_pred != test$time_in_hospital)
+```
+
+```{r}
+varImp(log_reg_aic) %>%
+  arrange(desc(Overall))
+
+V = varImp(log_reg_aic)
+ggplot2::ggplot(V, aes(x=reorder(rownames(V),Overall), y=Overall)) +
+geom_col()+
+xlab('Variable')+
+ylab('Overall Importance')+
+  ggtitle("Logistic Regression Variable Importance") + 
+theme_bw() +
+  theme(axis.text.y=element_text(size=4)) + 
+  coord_flip()
+
+
+# dev.print(pdf, 'lr_importance.pdf')
+```
+
+Random Forest Full
+```{r}
+# Random forest
+library(randomForest)
+rf1 = randomForest(as.factor(time_in_hospital) ~ ., data = train)
+rf1[5]
+```
+
+```{r}
+pred_test1 <- predict(rf1, newdata = test, type= "class")
+mean(pred_test1 != test$time_in_hospital)
+
+confusionMatrix(table(pred_test1,test$time_in_hospital))
+```
+
+```{r}
+V_r = varImp(rf1)
+ggplot2::ggplot(V_r, aes(x=reorder(rownames(V_r),Overall), y=Overall)) +
+geom_col()+
+xlab('Variable')+
+ylab('Overall Importance')+
+  ggtitle("Random Forest Variable Importance") + 
+theme_bw() +
+  theme(axis.text.y=element_text(size=4)) + 
+  coord_flip()
+
+# dev.print(pdf, 'rf_importance.pdf')
+```
+
+```{r}
+library(RColorBrewer)
+heatmap(rf1[[5]][1:2, 1:2], Colv = NA, Rowv = NA, scale = "none",
+main = "Random Forest Confusion Matrix",
+col = colorRampPalette(brewer.pal(8, "Blues"))(25),
+margins = c(0.7, 0.7))
+legend("topright", c("Small", "Large"),
+fill=colorRampPalette(brewer.pal(8, "Blues"))(3),
+     cex = 0.7)
+# dev.print(pdf, 'rf_conf_mat.pdf')
+```
+
+Random Forest Subset
+
+```{r}
+# Random forest
+# only variables scoring less than 13 are removed
+rf2 = randomForest(as.factor(time_in_hospital) ~ race + gender+ age+payer_code+medical_specialty + num_lab_procedures + num_procedures + num_medications + number_outpatient + number_emergency + number_inpatient + diag_1 + diag_2 + diag_3 + number_diagnoses + max_glu_serum + A1Cresult + metformin + repaglinide + nateglinide + glimepiride + glipizide + glyburide + pioglitazone + rosiglitazone + acarbose + insulin + glyburide.metformin + change + diabetesMed + readmitted, data = train)
+rf2[5]
+```
+
+```{r}
+pred_test2 <- predict(rf2, newdata = test, type= "class")
+mean(pred_test2 != test$time_in_hospital)
+
+confusionMatrix(table(pred_test2,test$time_in_hospital))
+
+varImp(rf2)  %>%
+  arrange(desc(Overall))
+```
+
+# Results
+
+```{r}
+# 5 most important variables
+# logistic regression aic chosen model
+varImp(log_reg_aic)  %>%
+  arrange(desc(Overall)) %>%
+  top_n(5)
+
+# random forest full model
+varImp(rf1)  %>%
+  arrange(desc(Overall)) %>%
+  top_n(5)
+```
+
+
+```{r}
+# 5 least important variables
+# logistic regression aic chosen model
+varImp(log_reg_aic)  %>%
+  arrange(desc(Overall)) %>%
+  top_n(-5)
+
+# random forest full model
+varImp(rf1)  %>%
+  arrange(desc(Overall)) %>%
+  top_n(-5)
+```
+
+```{r}
+# logistic regression aic chosen model
+mean(test_pred != test$time_in_hospital)
+
+# random forest full model
+mean(pred_test1 != test$time_in_hospital)
+```
+
+
+# Dataset
+
+<https://www.kaggle.com/datasets/jimschacko/10-years-diabetes-dataset/data>
+
+Variable Information
+
+<https://www.hindawi.com/journals/bmri/2014/781670/tab1/>
+
+<https://www.hindawi.com/journals/bmri/2014/781670/tab2/>
+
+
